@@ -1,0 +1,282 @@
+---
+title: "Investigation in how long prime ministers of Australia lived, based on the year they were born."
+author: "Daisy Huo"
+thanks: "Code and data are available at: https://github.com/dai929/Prime_Minister_of_Canada.git"
+date: today
+date-format: long
+format: pdf
+number-sections: true
+bibliography: references.bib
+---
+
+```{r}
+#| include: false
+#| warning: false
+#| message: false
+
+### Workspace set-up ###
+
+library(tidyverse)
+library(janitor)
+library(dplyr)
+library(opendatatoronto)
+library(readr)
+library(ggplot2)
+library(knitr)
+library(here)
+library(rvest)
+library(randomNames)
+library(xml2)
+```
+
+# Introduction
+
+In this paper, we will investigate in the life time of the prime ministers of Australia, based on the year they were born. We will scrape data from Wikipedia [@wikiPM] using rvest [@Rrvest], clean it, and then make a graph.
+
+Data was collected, cleaned, and analyzed using the statistical programming software R [@citeR], with additional support from R packages "tidyverse" [@Rtidyverse], "rvest" [@Rrvest], "randomNames" [@RrandomNames], "xml2" [@Rxml2], "dplyr" [@Rdylyr], "readr" [@Rreadr], "janitor" [@Rjanitor], "knitr" [@Rknitr], "here" [@Rhere] and "ggplot2" [@Rggplot2].
+
+# Plan Data
+
+We will start by planning the dataset. We need to plan two aspects. The first is what the simulated dataset will look like, and the second is what the final graph will look like.
+
+The dataset needs to have variables that specify the names of the Prime Ministers, their birth year, death year and the years their lived. Roughly, it should look like Table 1.
+
+We are interested to make a graph with year on the x-axis and the names of the Prime Ministers on the y-axis. Each Prime Minister should be categoried into "Alive" or "Passed Away". A quick sketch of what we are looking for is Figure 1.
+
+```{r}
+#| label: tb1-sketch-of-dataset
+#| message: false
+#| warning: false
+#| echo: false
+#| tb1-cap: "Quick sketch of a dataset that could be useful for analyzing how long each Prime Minister of Australia lived"
+
+set.seed(853)
+
+planned_dataset <-
+  tibble(
+    prime_minister = randomNames::randomNames(10) |>
+      unlist() |>
+      sample(size = 10, replace = FALSE),
+    birth_year = sample(1700:1990, size = 10, replace = TRUE),
+    years_lived = sample(50:100, size = 10, replace = TRUE),
+    death_year = birth_year + years_lived
+  ) |>
+  select(prime_minister, birth_year, death_year, years_lived) |>
+  arrange(birth_year)
+
+planned_dataset |>
+  slice(1:5) |>
+  kable(
+    col.names = c("Prime Minister", "Birth Year", "Death Year", "Years Lived"),
+    digits = 1,
+    booktabs = TRUE,
+    linesep = "",
+    caption = "Quick sketch of a dataset that could be useful for analyzing how long each Prime Minister of Australia lived"
+  )
+```
+
+```{r, fig.cap="Quick sketch of planned graph showing how long prime ministers of Australia lived"}
+#| label: figl-graph-of-dataset
+#| message: false
+#| warning: false
+#| echo: false
+#| figurel-cap: "Quick sketch of planned graph showing how long prime ministers of Australia lived"
+
+planned_dataset |>
+  ggplot(
+    aes(x = birth_year, xend = death_year, y = prime_minister, yend = prime_minister)
+    ) +
+  geom_segment() +
+  labs(
+    x = "Year of birth", y = "Prime minister"
+    ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "bottom")
+```
+
+# Simulate Data
+
+To that end, we will proceed by generating our simulated dataset. We would want a table that has a row for each prime minister, columns for their name, birth and death years. If the prime ministers are still alive, then their death year can be empty. We know that death year should be larger than birth year. Finally, we also know that the years should be integers, and the names should be characters. We want a dataset that looks roughly like Table 2.
+
+```{r}
+#| label: tb2-simulated-dataset
+#| message: false
+#| warning: false
+#| echo: false
+#| tb2-cap: "First ten rows of simulated dataset for analyzing how long each Prime Minister of Australia lived"
+
+set.seed(853)
+
+simulated_dataset <-
+  tibble(
+    prime_minister = randomNames::randomNames(10) |>
+      unlist() |>
+      sample(size = 10, replace = FALSE),
+    birth_year = sample(1700:1990, size = 10, replace = TRUE),
+    years_lived = sample(50:100, size = 10, replace = TRUE),
+    death_year = birth_year + years_lived
+  ) |>
+  select(prime_minister, birth_year, death_year, years_lived) |>
+  arrange(birth_year)
+
+simulated_dataset |>
+  slice(1:10) |>
+  kable(
+    col.names = c("Prime Minister", "Birth Year", "Death Year", "Years Lived"),
+    digits = 1,
+    booktabs = TRUE,
+    linesep = "",
+    caption = "First ten rows of simulated dataset for analyzing how long each Prime Minister of Australia lived"
+  )
+```
+
+# Acquire Data
+
+In interest of how long each prime minister of Autralia lived, we need to acquire a source of data for further web scraping. The Wikipedia page about prime ministers of Australia [@wikiPM] fits our requirement and can therefore be used as a trusted source of data. As Wikipedia is known as a popular page, which the information contained is highly likely to be correct. The dataset are presented in a table.
+
+First step, we want to save the dataset locally for reproducibility.
+
+```{r}
+#| message: false
+#| warning: false
+#| echo: false
+
+raw_data <-
+  read_html(
+    "https://en.wikipedia.org/wiki/List_of_prime_ministers_of_Australia"
+  )
+write_html(raw_data, "pms.html")
+
+raw_data <- read_html("pms.html")
+
+parse_data_selector_gadget <-
+  raw_data |>
+  html_element(".wikitable") |>
+  html_table()
+
+head(parse_data_selector_gadget)
+```
+
+However, in this case, there are too many redundant rows and columns that we do not need in our investigation. Therefore, we will need to clean the dataset.
+
+```{r}
+#| message: false
+#| warning: false
+#| echo: false
+
+parsed_data <-
+  parse_data_selector_gadget |> 
+  clean_names() |> 
+  rename(raw_text = name_birth_death_constituency) |> 
+  select(raw_text) |> 
+  filter(raw_text != "Name(Birth-Death)Constituency") |> 
+  distinct()
+
+parsed_data = parsed_data[-1,]
+
+head(parsed_data)
+```
+
+Now that we successfully obtained the parsed data, we need to clean it to match what we wanted. We want a column of the names of Prime Ministers, as well as the columns for birth year and death year. We then need to apply a different expression for the prime ministers who are still alive.
+
+```{r}
+#| message: false
+#| warning: false
+#| echo: false
+
+initial_clean <-
+  parsed_data |>
+  separate(
+    raw_text, into = c("name", "not_name"), sep = "\\(", extra = "merge",
+  ) |> 
+  mutate(date = str_extract(not_name, "[[:digit:]]{4}–[[:digit:]]{4}"),
+         born = str_extract(not_name, "b.[[:space:]][[:digit:]]{4}")
+         ) |>
+  select(name, date, born)
+  
+head(initial_clean)
+```
+
+Finally, we are left to clean up the columns.
+
+```{r}
+#| message: false
+#| warning: false
+#| echo: false
+
+cleaned_data <-
+  initial_clean |>
+  separate(date, into = c("birth", "died"), 
+           sep = "–") |>   # PMs who have died have their birth and death years 
+  # separated by a hyphen, but we need to be careful with the hyphen as it seems 
+  # to be a slightly odd type of hyphen and we need to copy/paste it.
+  mutate(
+    born = str_remove_all(born, "b.[[:space:]]"),
+    birth = if_else(!is.na(born), born, birth)
+  ) |> # Alive PMs have slightly different format
+  select(-born) |>
+  rename(born = birth) |> 
+  mutate(across(c(born, died), as.integer)) |> 
+  mutate(Age_at_Death = died - born) |> 
+  distinct() # Some of the PMs had two goes at it.
+
+head(cleaned_data)
+```
+
+# Explore Data
+
+After having the cleaned data, our dataset would look pretty much similar to the sketch we had in Table 1.
+
+```{r}
+#| label: tb3-cleaned-dataset
+#| message: false
+#| warning: false
+#| echo: false
+#| tb3-cap: "Cleaned dataset for analyzing how long each Prime Minister of Australia lived"
+
+cleaned_data |>
+  head() |>
+  kable(
+    col.names = c("Prime Minister", "Birth year", "Death year", "Age at death"),
+    caption = "Cleaned dataset for analyzing how long each Prime Minister of Australia lived"
+    )
+```
+
+At this point we would like to make a graph that illustrates how long each prime minister lived (Figure 2). If they are still alive then we would like their lines to run to the end. Moreover, we would like to color this category differently.
+
+```{r fig.cap="How long each prime minister of Australia lived", fig.width=13, fig.height=10}
+#| label: fig2-graph-of-dataset
+#| message: false
+#| warning: false
+#| echo: false
+#| figure2-cap: "How long each prime minister of Australia lived"
+
+cleaned_data |>
+  mutate(
+    still_alive = if_else(is.na(died), "Yes", "No"),
+    died = if_else(is.na(died), as.integer(2023), died)
+  ) |>
+  mutate(name = as_factor(name)) |>
+  ggplot(
+    aes(x = born, xend = died, y = name, yend = name, color = still_alive)
+    ) +
+  geom_segment() +
+  labs(
+    x = "Year of birth", y = "Prime minister", color = "PM is currently alive"
+    ) +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "bottom")
+
+```
+
+# Discussion
+
+By plotting out the life span of each Prime Minister of Australia, I found that 22 of the 31 Prime Ministers passed away, and 9 of the 31 Prime Ministers were still alive till now. Regarding of the ones that passed away, I am able to find a ascending trend of the number of years that they lived, which implies that recent Prime Ministers tend to live longer than those in the past. This could be caused by the improvement of medical health technology, while the correlation between this topic and the life span of prime ministers requires further study.
+
+This paper took longer than expected in the data cleaning process. However, playing and exploring with the SelectorGadget [@SG] was fun. Next time when I plan to create a similar table and graph, I will try to analyze the raw data more carefully so that I can save some time in the data cleaning process.
+
+\newpage
+
+# References
